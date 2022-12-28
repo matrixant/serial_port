@@ -1,0 +1,46 @@
+#!/usr/bin/env python
+
+Import("env")
+Import("env_modules")
+
+env_serial = env_modules.Clone()
+
+# Thirdparty source files
+
+serial_obj = []
+
+serial_dir = "serial/"
+serial_sources = ["src/serial.cc"]
+
+if env["platform"] == "windows":
+    serial_sources.append("src/impl/win.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_win.cc")
+    if env.msvc:
+        env.Append(LINKFLAGS=["setupapi.lib"])
+    else:
+        env.Append(LIBS=["setupapi"])
+elif env["platform"] == "x11":
+    serial_sources.append("src/impl/unix.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_linux.cc")
+elif env["platform"] == "osx":
+    serial_sources.append("src/impl/unix.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_osx.cc")
+
+serial_sources = [serial_dir + file for file in serial_sources]
+
+env_serial.Prepend(CPPPATH=[serial_dir + "include"])
+
+env_serial = env_serial.Clone()
+env_serial.disable_warnings()
+env_serial.add_source_files(serial_obj, serial_sources)
+env.modules_sources += serial_obj
+
+# Godot source files
+
+module_obj = []
+
+env_serial.add_source_files(module_obj, "*.cpp")
+env.modules_sources += module_obj
+
+# Needed to force rebuilding the module files when the serial library is updated.
+env.Depends(module_obj, serial_obj)
