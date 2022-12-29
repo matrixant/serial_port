@@ -31,22 +31,20 @@
 #include "serial_port.h"
 #include "core/object/class_db.h"
 #include "core/os/memory.h"
+#include "core/os/os.h"
 #include <string>
 
-SerialPort::SerialPort(const String &port,
-		uint32_t baudrate,
-		uint32_t timeout,
-		ByteSize bytesize,
-		Parity parity,
-		StopBits stopbits,
-		FlowControl flowcontrol) {
-	m_serial = new Serial(port.ascii().get_data(),
-			baudrate, Timeout::simpleTimeout(timeout), bytesize_t(bytesize), parity_t(parity),
-			stopbits_t(stopbits), flowcontrol_t(flowcontrol));
+void SerialPort::_data_received(const PackedByteArray &buf) {
+	emit_signal(SNAME("data_received"), buf);
+}
+
+SerialPort::SerialPort(const String &port, uint32_t baudrate, uint32_t timeout, ByteSize bytesize, Parity parity, StopBits stopbits, FlowControl flowcontrol) {
+	serial = new Serial(port.ascii().get_data(),
+			baudrate, Timeout::simpleTimeout(timeout), bytesize_t(bytesize), parity_t(parity), stopbits_t(stopbits), flowcontrol_t(flowcontrol));
 }
 
 SerialPort::~SerialPort() {
-	delete m_serial;
+	delete serial;
 }
 
 Dictionary SerialPort::list_ports() {
@@ -63,37 +61,107 @@ Dictionary SerialPort::list_ports() {
 	return info_dict;
 }
 
-void SerialPort::open(String port) {
+void SerialPort::_on_error(const String &where, const String &what) {
+	fine_working = false;
+	error_message = "[" + get_port() + "] Error at " + where + ": " + what;
+	// ERR_FAIL_MSG(error_message);
+	emit_signal(SNAME("got_error"), where, what);
+}
+
+Error SerialPort::start_monitoring(uint64_t interval_in_usec) {
+	ERR_FAIL_COND_V_MSG(thread.is_started(), ERR_ALREADY_IN_USE, "Monitor already started.");
+	monitoring_should_exit = false;
+	monitoring_interval = interval_in_usec;
+	thread.start(_thread_func, this);
+	if (is_open()) {
+		fine_working = true;
+	} else {
+		fine_working = false;
+	}
+
+	return OK;
+}
+
+void SerialPort::stop_monitoring() {
+	if (thread.is_started()) {
+		monitoring_should_exit = true;
+		thread.wait_to_finish();
+	}
+}
+
+void SerialPort::_thread_func(void *p_user_data) {
+	SerialPort *serial_port = static_cast<SerialPort *>(p_user_data);
+	while (!serial_port->monitoring_should_exit) {
+		uint64_t ticks_usec = OS::get_singleton()->get_ticks_usec();
+		if (serial_port->fine_working) {
+			if (serial_port->is_open() && serial_port->available() > 0) {
+				serial_port->call_deferred(SNAME("_data_received"), serial_port->read_raw(serial_port->available()));
+			}
+		}
+		ticks_usec = OS::get_singleton()->get_ticks_msec() - ticks_usec;
+		if (ticks_usec < serial_port->monitoring_interval) {
+			OS::get_singleton()->delay_usec(serial_port->monitoring_interval - ticks_usec);
+		}
+	}
+}
+
+Error SerialPort::open(String port) {
+	error_message = "";
 	try {
-		if (m_serial->isOpen()) {
+		if (serial->isOpen()) {
 			close();
 		}
 		if (!port.is_empty()) {
 			set_port(port);
 		}
-		m_serial->open();
+		serial->open();
 	} catch (IOException &e) {
-		emit_signal("error", "open", e.what());
+		_on_error(__FUNCTION__, e.what());
+		return ERR_CANT_OPEN;
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+		return ERR_ALREADY_IN_USE;
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+		return ERR_INVALID_PARAMETER;
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+		return FAILED;
 	}
+
+	fine_working = true;
+	emit_signal(SNAME("opened"), port);
+	return OK;
 }
 
 bool SerialPort::is_open() const {
-	return m_serial->isOpen();
+	return serial->isOpen();
 }
 
 void SerialPort::close() {
 	try {
-		m_serial->close();
+		serial->close();
 	} catch (IOException &e) {
-		emit_signal("error", "close", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	fine_working = false;
+	emit_signal(SNAME("closed"), serial->getPort().c_str());
 }
 
 size_t SerialPort::available() {
 	try {
-		return m_serial->available();
+		return serial->available();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "available", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return 0;
@@ -101,9 +169,13 @@ size_t SerialPort::available() {
 
 bool SerialPort::wait_readable() {
 	try {
-		return m_serial->waitReadable();
+		return serial->waitReadable();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "wait_readable", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return false;
@@ -111,39 +183,62 @@ bool SerialPort::wait_readable() {
 
 void SerialPort::wait_byte_times(size_t count) {
 	try {
-		m_serial->waitByteTimes(count);
+		serial->waitByteTimes(count);
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "wait_byte_times", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 }
 
 PackedByteArray SerialPort::read_raw(size_t size) {
+	PackedByteArray raw;
 	std::vector<uint8_t> buf_temp;
 	try {
-		m_serial->read(buf_temp, size);
+		size_t bytes_read = serial->read(buf_temp, size);
+		if (bytes_read > 0 && raw.resize(bytes_read) == OK) {
+			memcpy(raw.ptrw(), (const char *)buf_temp.data(), bytes_read);
+		}
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "read_raw", e.what());
-	}
-	PackedByteArray raw;
-	if (raw.resize(size) == OK && buf_temp.size() > 0) {
-		memcpy(raw.ptrw(), (const char *)buf_temp.data(), buf_temp.size());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return raw;
 }
 
 String SerialPort::read_str(size_t size, bool utf8_encoding) {
+	CharString char_str;
+	std::vector<uint8_t> buf_temp;
 	try {
-		const char *str_buf = m_serial->read(size).c_str();
-		if (utf8_encoding) {
-			String str;
-			str.parse_utf8(str_buf);
-			return str;
-		} else {
-			return str_buf;
+		String str;
+		size_t bytes_read = serial->read(buf_temp, size);
+		if (bytes_read > 0 && char_str.resize(bytes_read + 1) == OK) {
+			memcpy(char_str.ptrw(), (const char *)buf_temp.data(), bytes_read);
+			char_str[bytes_read] = 0;
+
+			if (utf8_encoding) {
+				str.parse_utf8(char_str.get_data(), bytes_read);
+			} else {
+				str = char_str.get_data();
+			}
 		}
+		return str;
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "read_str", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return "";
@@ -151,9 +246,15 @@ String SerialPort::read_str(size_t size, bool utf8_encoding) {
 
 size_t SerialPort::write_raw(const PackedByteArray &data) {
 	try {
-		return m_serial->write(data.ptr(), data.size());
+		return serial->write(data.ptr(), data.size());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "write_raw", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return 0;
@@ -163,112 +264,349 @@ size_t SerialPort::write_str(const String &data, bool utf8_encoding) {
 	try {
 		if (utf8_encoding) {
 			CharString str = data.utf8();
-			return m_serial->write((const uint8_t *)(str.get_data()), str.size());
+			return serial->write((const uint8_t *)(str.get_data()), str.size());
 		} else {
 			CharString str = data.ascii();
-			return m_serial->write((const uint8_t *)(str.get_data()), str.size());
+			return serial->write((const uint8_t *)(str.get_data()), str.size());
 		}
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "write_str", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return 0;
 }
 
-String SerialPort::read_line(size_t size, String eol, bool utf8_encoding) {
+String SerialPort::read_line(size_t max_length, String eol, bool utf8_encoding) {
 	try {
 		if (utf8_encoding) {
 			String str;
-			str.parse_utf8(m_serial->readline(size, eol.utf8().get_data()).c_str());
+			str.parse_utf8(serial->readline(max_length, eol.utf8().get_data()).c_str());
 			return str;
 		} else {
-			return m_serial->readline(size, eol.ascii().get_data()).c_str();
+			return serial->readline(max_length, eol.ascii().get_data()).c_str();
 		}
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
 	} catch (SerialException &e) {
-		emit_signal("error", "read_line", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
 
 	return "";
 }
 
-void SerialPort::set_port(const String &port) {
+Error SerialPort::set_port(const String &port) {
 	try {
-		m_serial->setPort(port.ascii().get_data());
+		serial->setPort(port.ascii().get_data());
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_port", e.what());
+		_on_error(__FUNCTION__, e.what());
+		return ERR_CANT_OPEN;
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+		return ERR_ALREADY_IN_USE;
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+		return ERR_INVALID_PARAMETER;
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+		return FAILED;
 	}
+
+	return OK;
 }
 
 String SerialPort::get_port() const {
-	return m_serial->getPort().c_str();
+	return serial->getPort().c_str();
 }
 
-void SerialPort::set_timeout(uint32_t timeout) {
-	m_serial->setTimeout(Timeout::max(), timeout, 0, timeout, 0);
+Error SerialPort::set_timeout(uint32_t timeout) {
+	serial->setTimeout(Timeout::max(), timeout, 0, timeout, 0);
+	return OK;
 }
 
 uint32_t SerialPort::get_timeout() const {
-	return m_serial->getTimeout().read_timeout_constant;
+	return serial->getTimeout().read_timeout_constant;
 }
 
-void SerialPort::set_baudrate(uint32_t baudrate) {
+Error SerialPort::set_baudrate(uint32_t baudrate) {
 	try {
-		m_serial->setBaudrate(baudrate);
+		serial->setBaudrate(baudrate);
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_baudrate", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	return FAILED;
 }
 
 uint32_t SerialPort::get_baudrate() const {
-	return m_serial->getBaudrate();
+	return serial->getBaudrate();
 }
 
-void SerialPort::set_bytesize(ByteSize bytesize) {
+Error SerialPort::set_bytesize(ByteSize bytesize) {
 	try {
-		m_serial->setBytesize(bytesize_t(bytesize));
+		serial->setBytesize(bytesize_t(bytesize));
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_bytesize", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	return FAILED;
 }
 
 SerialPort::ByteSize SerialPort::get_bytesize() const {
-	return ByteSize(m_serial->getBytesize());
+	return ByteSize(serial->getBytesize());
 }
 
-void SerialPort::set_parity(Parity parity) {
+Error SerialPort::set_parity(Parity parity) {
 	try {
-		m_serial->setParity(parity_t(parity));
+		serial->setParity(parity_t(parity));
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_parity", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	return FAILED;
 }
 
 SerialPort::Parity SerialPort::get_parity() const {
-	return Parity(m_serial->getParity());
+	return Parity(serial->getParity());
 }
 
-void SerialPort::set_stopbits(StopBits stopbits) {
+Error SerialPort::set_stopbits(StopBits stopbits) {
 	try {
-		m_serial->setStopbits(stopbits_t(stopbits));
+		serial->setStopbits(stopbits_t(stopbits));
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_stopbits", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	return FAILED;
 }
 
 SerialPort::StopBits SerialPort::get_stopbits() const {
-	return StopBits(m_serial->getStopbits());
+	return StopBits(serial->getStopbits());
 }
 
-void SerialPort::set_flowcontrol(FlowControl flowcontrol) {
+Error SerialPort::set_flowcontrol(FlowControl flowcontrol) {
 	try {
-		m_serial->setFlowcontrol(flowcontrol_t(flowcontrol));
+		serial->setFlowcontrol(flowcontrol_t(flowcontrol));
+		return OK;
 	} catch (IOException &e) {
-		emit_signal("error", "set_flowcontrol", e.what());
+		_on_error(__FUNCTION__, e.what());
+	} catch (std::invalid_argument &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
 	}
+
+	return FAILED;
 }
 
 SerialPort::FlowControl SerialPort::get_flowcontrol() const {
-	return FlowControl(m_serial->getFlowcontrol());
+	return FlowControl(serial->getFlowcontrol());
+}
+
+Error SerialPort::flush() {
+	try {
+		serial->flush();
+		return OK;
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::flush_input() {
+	try {
+		serial->flushInput();
+		return OK;
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::flush_output() {
+	try {
+		serial->flushOutput();
+		return OK;
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::send_break(int duration) {
+	try {
+		serial->sendBreak(duration);
+		return OK;
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::set_break(bool level) {
+	try {
+		serial->setBreak(level);
+		return OK;
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::set_rts(bool level) {
+	try {
+		serial->setRTS(level);
+		return OK;
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return FAILED;
+}
+
+Error SerialPort::set_dtr(bool level) {
+	try {
+		serial->setDTR(level);
+		return OK;
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+	return FAILED;
+}
+
+bool SerialPort::wait_for_change() {
+	try {
+		return serial->waitForChange();
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return false;
+}
+
+bool SerialPort::get_cts() {
+	try {
+		return serial->getCTS();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return false;
+}
+
+bool SerialPort::get_dsr() {
+	try {
+		return serial->getDSR();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return false;
+}
+
+bool SerialPort::get_ri() {
+	try {
+		return serial->getRI();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return false;
+}
+
+bool SerialPort::get_cd() {
+	try {
+		return serial->getCD();
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return false;
 }
 
 String SerialPort::_to_string() const {
@@ -285,6 +623,12 @@ String SerialPort::_to_string() const {
 void SerialPort::_bind_methods() {
 	ClassDB::bind_static_method("SerialPort", D_METHOD("list_ports"), &SerialPort::list_ports);
 
+	ClassDB::bind_method(D_METHOD("_data_received", "data"), &SerialPort::_data_received);
+	ClassDB::bind_method(D_METHOD("start_monitoring", "interval_in_usec"), &SerialPort::start_monitoring, DEFVAL(10000));
+	ClassDB::bind_method(D_METHOD("stop_monitoring"), &SerialPort::stop_monitoring);
+	ClassDB::bind_method(D_METHOD("is_in_error"), &SerialPort::is_in_error);
+	ClassDB::bind_method(D_METHOD("get_last_error"), &SerialPort::get_last_error);
+
 	ClassDB::bind_method(D_METHOD("available"), &SerialPort::available);
 	ClassDB::bind_method(D_METHOD("wait_readable"), &SerialPort::wait_readable);
 	ClassDB::bind_method(D_METHOD("wait_byte_times", "count"), &SerialPort::wait_byte_times);
@@ -292,7 +636,7 @@ void SerialPort::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("write_str", "data", "utf8_encoding"), &SerialPort::write_str, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("read_raw", "size"), &SerialPort::read_raw, DEFVAL(1));
 	ClassDB::bind_method(D_METHOD("write_raw", "data"), &SerialPort::write_raw);
-	ClassDB::bind_method(D_METHOD("read_line", "size", "eol", "utf8_encoding"), &SerialPort::read_line, DEFVAL(65535), DEFVAL("\n"), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("read_line", "max_len", "eol", "utf8_encoding"), &SerialPort::read_line, DEFVAL(65535), DEFVAL("\n"), DEFVAL(false));
 
 	ClassDB::bind_method(D_METHOD("open", "port"), &SerialPort::open, DEFVAL(""));
 	ClassDB::bind_method(D_METHOD("is_open"), &SerialPort::is_open);
@@ -312,7 +656,20 @@ void SerialPort::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_flowcontrol", "flowcontrol"), &SerialPort::set_flowcontrol);
 	ClassDB::bind_method(D_METHOD("get_flowcontrol"), &SerialPort::get_flowcontrol);
 
-	ADD_PROPERTY(PropertyInfo(Variant::STRING, "port"), "set_port", "get_port");
+	ClassDB::bind_method(D_METHOD("flush"), &SerialPort::flush);
+	ClassDB::bind_method(D_METHOD("flush_input"), &SerialPort::flush_input);
+	ClassDB::bind_method(D_METHOD("flush_output"), &SerialPort::flush_output);
+	ClassDB::bind_method(D_METHOD("send_break", "duration"), &SerialPort::send_break);
+	ClassDB::bind_method(D_METHOD("set_break", "level"), &SerialPort::set_break, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("set_rts", "level"), &SerialPort::set_rts, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("set_dtr", "level"), &SerialPort::set_dtr, DEFVAL(true));
+	ClassDB::bind_method(D_METHOD("wait_for_change"), &SerialPort::wait_for_change);
+	ClassDB::bind_method(D_METHOD("get_cts"), &SerialPort::get_cts);
+	ClassDB::bind_method(D_METHOD("get_dsr"), &SerialPort::get_dsr);
+	ClassDB::bind_method(D_METHOD("get_ri"), &SerialPort::get_ri);
+	ClassDB::bind_method(D_METHOD("get_cd"), &SerialPort::get_cd);
+
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "port"), "set_port", "get_port");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "baudrate"), "set_baudrate", "get_baudrate");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "bytesize", PROPERTY_HINT_ENUM, "5, 6, 7, 8"), "set_bytesize", "get_bytesize");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "parity", PROPERTY_HINT_ENUM, "None, Odd, Even, Mark, Space"), "set_parity", "get_parity");
@@ -320,13 +677,16 @@ void SerialPort::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "flowcontrol", PROPERTY_HINT_ENUM, "None, Software, Hardware"), "set_flowcontrol", "get_flowcontrol");
 
 	ADD_PROPERTY_DEFAULT("port", "");
-	ADD_PROPERTY_DEFAULT("baudrate", 115200);
+	ADD_PROPERTY_DEFAULT("baudrate", 9600);
 	ADD_PROPERTY_DEFAULT("bytesize", BYTESIZE_8);
 	ADD_PROPERTY_DEFAULT("parity", PARITY_NONE);
 	ADD_PROPERTY_DEFAULT("stopbits", STOPBITS_1);
 	ADD_PROPERTY_DEFAULT("flowcontrol", FLOWCONTROL_NONE);
 
-	ADD_SIGNAL(MethodInfo("error", PropertyInfo(Variant::STRING, "where"), PropertyInfo(Variant::STRING, "what")));
+	ADD_SIGNAL(MethodInfo("got_error", PropertyInfo(Variant::STRING, "where"), PropertyInfo(Variant::STRING, "what")));
+	ADD_SIGNAL(MethodInfo("opened", PropertyInfo(Variant::STRING, "port")));
+	ADD_SIGNAL(MethodInfo("data_received", PropertyInfo(Variant::PACKED_BYTE_ARRAY, "data")));
+	ADD_SIGNAL(MethodInfo("closed", PropertyInfo(Variant::STRING, "port")));
 
 	BIND_ENUM_CONSTANT(BYTESIZE_5);
 	BIND_ENUM_CONSTANT(BYTESIZE_6);
@@ -341,7 +701,7 @@ void SerialPort::_bind_methods() {
 
 	BIND_ENUM_CONSTANT(STOPBITS_1);
 	BIND_ENUM_CONSTANT(STOPBITS_2);
-	BIND_ENUM_CONSTANT(STOPBITS_1_5);
+	BIND_ENUM_CONSTANT(STOPBITS_1P5);
 
 	BIND_ENUM_CONSTANT(FLOWCONTROL_NONE);
 	BIND_ENUM_CONSTANT(FLOWCONTROL_SOFTWARE);

@@ -32,7 +32,7 @@
 #define SERIAL_PORT_H
 
 #include "core/object/ref_counted.h"
-//#include "core/os/thread.h"
+#include "core/os/thread.h"
 #include "core/string/ustring.h"
 #include "core/templates/rb_map.h"
 #include "core/templates/vector.h"
@@ -43,8 +43,17 @@
 
 using namespace serial;
 
-class SerialPort : public RefCounted {
-	GDCLASS(SerialPort, RefCounted);
+class SerialPort : public Object {
+	GDCLASS(SerialPort, Object);
+
+	Serial *serial;
+	Thread thread;
+	bool fine_working = false;
+	int monitoring_interval = 10000;
+	bool monitoring_should_exit = false;
+	String error_message = "";
+
+	void _data_received(const PackedByteArray &buf);
 
 public:
 	enum ByteSize {
@@ -63,7 +72,7 @@ public:
 	enum StopBits {
 		STOPBITS_1 = stopbits_one,
 		STOPBITS_2 = stopbits_two,
-		STOPBITS_1_5 = stopbits_one_point_five,
+		STOPBITS_1P5 = stopbits_one_point_five,
 	};
 	enum FlowControl {
 		FLOWCONTROL_NONE = flowcontrol_none,
@@ -72,7 +81,7 @@ public:
 	};
 
 	SerialPort(const String &port = "",
-			uint32_t baudrate = 115200,
+			uint32_t baudrate = 9600,
 			uint32_t timeout = 0,
 			ByteSize bytesize = BYTESIZE_8,
 			Parity parity = PARITY_NONE,
@@ -83,7 +92,15 @@ public:
 
 	static Dictionary list_ports();
 
-	void open(String port = "");
+	bool is_in_error() { return is_open() && !fine_working; }
+	inline String get_last_error() { return error_message; }
+	void _on_error(const String &where, const String &what);
+
+	Error start_monitoring(uint64_t interval_in_usec = 10000);
+	void stop_monitoring();
+	static void _thread_func(void *p_user_data);
+
+	Error open(String port = "");
 
 	bool is_open() const;
 
@@ -105,47 +122,47 @@ public:
 
 	String read_line(size_t size = 65535, String eol = "\n", bool utf8_encoding = false);
 
-	void set_port(const String &port);
+	Error set_port(const String &port);
 
 	String get_port() const;
 
-	void set_timeout(uint32_t timeout);
+	Error set_timeout(uint32_t timeout);
 
 	uint32_t get_timeout() const;
 
-	void set_baudrate(uint32_t baudrate);
+	Error set_baudrate(uint32_t baudrate);
 
 	uint32_t get_baudrate() const;
 
-	void set_bytesize(ByteSize bytesize);
+	Error set_bytesize(ByteSize bytesize);
 
 	ByteSize get_bytesize() const;
 
-	void set_parity(Parity parity);
+	Error set_parity(Parity parity);
 
 	Parity get_parity() const;
 
-	void set_stopbits(StopBits stopbits);
+	Error set_stopbits(StopBits stopbits);
 
 	StopBits get_stopbits() const;
 
-	void set_flowcontrol(FlowControl flowcontrol);
+	Error set_flowcontrol(FlowControl flowcontrol);
 
 	FlowControl get_flowcontrol() const;
 
-	void flush();
+	Error flush();
 
-	void flush_input();
+	Error flush_input();
 
-	void flush_output();
+	Error flush_output();
 
-	void send_break(int duration);
+	Error send_break(int duration);
 
-	void set_break(bool level = true);
+	Error set_break(bool level = true);
 
-	void set_rts(bool level = true);
+	Error set_rts(bool level = true);
 
-	void set_dtr(bool level = true);
+	Error set_dtr(bool level = true);
 
 	bool wait_for_change();
 
@@ -161,9 +178,6 @@ protected:
 	String _to_string() const;
 
 	static void _bind_methods();
-
-private:
-	Serial *m_serial;
 };
 
 VARIANT_ENUM_CAST(SerialPort::ByteSize);
