@@ -19,7 +19,8 @@ if env["platform"] == "windows":
         env.Append(LINKFLAGS=["setupapi.lib"])
     else:
         env.Append(LIBS=["setupapi"])
-elif env["platform"] == "x11":
+elif env["platform"] == "linuxbsd":
+    # if env["x11"]:
     serial_sources.append("src/impl/unix.cc")
     serial_sources.append("src/impl/list_ports/list_ports_linux.cc")
 elif env["platform"] == "osx":

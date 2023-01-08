@@ -1,0 +1,249 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<class name="SerialPort" inherits="Object" version="4.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="../../../doc/class.xsd">
+	<brief_description>
+		Support serial port communication.
+	</brief_description>
+	<description>
+		The [SerialPort] enables the serial port communication with your serial devices.
+		[b]Note:[/b] When using on linux, insure you have the promission to operate the serial port.
+	</description>
+	<tutorials>
+		<link title="SerialPort example">https://github.com/matrixant/serial_port_example</link>
+	</tutorials>
+	<members>
+		<member name="port" type="String" setter="set_port" getter="get_port" default="&quot;&quot;">
+			Set serial port name.
+		</member>
+		<member name="baudrate" type="int" setter="set_baudrate" getter="get_baudrate" default="9600">
+			Set serial baudrate.
+		</member>
+		<member name="bytesize" type="int" setter="set_bytesize" getter="get_bytesize" enum="SerialPort.ByteSize" default="8">
+			Set serial byte size.
+		</member>
+		<member name="parity" type="int" setter="set_parity" getter="get_parity" enum="SerialPort.Parity" default="0">
+			Set serial parity check type.
+		</member>
+		<member name="stopbits" type="int" setter="set_stopbits" getter="get_stopbits" enum="SerialPort.StopBits" default="1">
+			Set serial stop bits.
+		</member>
+		<member name="flowcontrol" type="int" setter="set_flowcontrol" getter="get_flowcontrol" enum="SerialPort.FlowControl" default="0">
+			Set serial flow control.
+		</member>
+	</members>
+	<signals>
+		<signal name="got_error">
+			<description>
+				Emitted when there is an error.
+			</description>
+		</signal>
+		<signal name="opened">
+			<description>
+				Emitted when the serial port opened.
+			</description>
+		</signal>
+		<signal name="data_received">
+			<description>
+				Emitted when the serial receive any data.
+			</description>
+		</signal>
+		<signal name="closed">
+			<description>
+				Emitted when the serial port closed.
+			</description>
+		</signal>
+	</signals>
+	<constants>
+		<constant name="BYTESIZE_5" value="5" enum="ByteSize">
+			One byte has 5 bits.
+		</constant>
+		<constant name="BYTESIZE_6" value="6" enum="ByteSize">
+			One byte has 6 bits.
+		</constant>
+		<constant name="BYTESIZE_7" value="7" enum="ByteSize">
+			One byte has 7 bits.
+		</constant>
+		<constant name="BYTESIZE_8" value="8" enum="ByteSize">
+			One byte has 8 bits.
+		</constant>
+		<constant name="PARITY_NONE" value="0" enum="Parity">
+			No parity check bit.
+		</constant>
+		<constant name="PARITY_ODD" value="1" enum="Parity">
+			Odd check.
+		</constant>
+		<constant name="PARITY_EVEN" value="2" enum="Parity">
+			Even check.
+		</constant>
+		<constant name="PARITY_MARK" value="3" enum="Parity">
+			Mark check.
+		</constant>
+		<constant name="PARITY_SPACE" value="4" enum="Parity">
+			Space check.
+		</constant>
+		<constant name="STOPBITS_1" value="1" enum="StopBits">
+			1 stop bit.
+		</constant>
+		<constant name="STOPBITS_2" value="2" enum="StopBits">
+			2 stop bits.
+		</constant>
+		<constant name="STOPBITS_1P5" value="3" enum="StopBits">
+			1.5 stop bits.
+		</constant>
+		<constant name="FLOWCONTROL_NONE" value="0" enum="FlowControl">
+			No flow control.
+		</constant>
+		<constant name="FLOWCONTROL_SOFTWARE" value="1" enum="FlowControl">
+			Software flow control.
+		</constant>
+		<constant name="FLOWCONTROL_HARDWARE" value="2" enum="FlowControl">
+			Hardware flow control.
+		</constant>
+	</constants>
+	<methods>
+		<method name="list_ports" qualifiers="static">
+			<return type="Dictionary"/>
+			<description>
+				Returns a [Dictionary] contains the serial ports information, the information key with [code]port[/code] name.
+			</description>
+		</method>
+		<method name="start_monitoring">
+			<return type="int" enum="Error" />
+			<param index="0" name="interval_in_usec" type="int" />
+			<description>
+				Returns [enum Error] when the monitoring already started, the [code]interval_in_usec[/code] set the monitoring interval.
+				When start monitoring, a data receive thread will be started. Any data received will emit the [signal data_received] signal.
+				[b]Example:[/b]
+				[codeblock]
+				var serial = SerialPort.new()
+
+				func _ready():
+				    serial.port = "COM2"
+				    serial.baudrate = 115200
+				    serial.data_received.connect(_on_data_received)
+				    serial.start_monitoring(20000)
+				    serial.open()
+				
+				func _on_data_received(data):
+				    print("Receive %d bytes: %s" % [data.size(), data])
+				[/codeblock]
+			</description>
+		</method>
+		<method name="stop_monitoring">
+			<description>
+				Stop the data monitoring.
+			</description>
+		</method>
+		<method name="is_in_error">
+			<return type="bool" />
+			<description>
+				Whether the serial port is in error, use [method get_last_error] to find the latest error message.
+			</description>
+		</method>
+		<method name="open">
+			<return type="int" enum="Error" />
+			<param index="0" name="port" type="String" default="&quot;&quot;"/>
+			<description>
+				Open the serial port.
+			</description>
+		</method>
+		<method name="is_open">
+			<return type="bool" />
+			<description>
+				Whether the port is open.
+			</description>
+		</method>
+		<method name="close">
+			<description>
+				Close the serial port.
+			</description>
+		</method>
+		<method name="available">
+			<return type="int" />
+			<description>
+				Return the received byte num.
+				[b]Note:[/b] If you are using [method start_monitoring] to get data, needless to use this method.
+			</description>
+		</method>
+		<method name="wait_readable">
+			<return type="bool" />
+			<description>
+				Block until there is serial data to read or [code]timeout[/code](Set by [method set_timeout]) number of milliseconds have elapsed.
+				The return value is true when the function exits with the port in a readable state, false otherwise (due to timeout or select interruption).
+				[b]Note:[/b] Not implemented on Windows.
+			</description>
+		</method>
+		<method name="wait_byte_times">
+			<return type="bool" />
+			<param index="0" name="count" type="int" />
+			<description>
+				Block for a period of time corresponding to the transmission time of count characters at present serial settings.
+				This may be used in conjunction with [method wait_readable] to read larger blocks of data from the port.
+				[b]Note:[/b] Not implemented on Windows.
+			</description>
+		</method>
+		<method name="read_str">
+			<return type="int" />
+			<param index="0" name="size" type="int" default="1" />
+			<param index="1" name="utf8_encoding" type="bool" default="false" />
+			<description>
+				Read string from the serial port. When expect an utf-8 string, let the [code]utf8_encoding[/code] be [code]true[/code]. The size is the maximum length of the string.
+			</description>
+		</method>
+		<method name="write_str">
+			<return type="int" />
+			<param index="0" name="content" type="String" />
+			<param index="1" name="utf8_encoding" type="bool" default="false" />
+			<description>
+				Write string to the serial port. When expect an utf-8 string, let the [code]utf8_encoding[/code] be [code]true[/code].
+			</description>
+		</method>
+		<method name="read_raw">
+			<return type="int" />
+			<param index="0" name="size" type="int" default="1" />
+			<description>
+				Read raw byte data from the serial port.
+			</description>
+		</method>
+		<method name="write_raw">
+			<return type="int" />
+			<param index="0" name="content" type="String" />
+			<param index="1" name="utf8_encoding" type="bool" default="false" />
+			<description>
+				Write raw byte data to the serial port.
+			</description>
+		</method>
+		<method name="read_line">
+			<return type="String" />
+			<param index="0" name="max_len" type="int" default="65535" />
+			<param index="1" name="eol" type="String" default="&quot;\n&quot;" />
+			<param index="2" name="utf8_encoding" type="bool" default="false" />
+			<description>
+				Read a string line end with the [code]eol[/code] from the serial port. When expect an utf-8 string, let the [code]utf8_encoding[/code] be [code]true[/code]. The max_len is the maximum length of the string.
+				[b]Note:[/b] The default [code]eol[/code] is [code]\n[/code].
+			</description>
+		</method>
+		<method name="read_lines">
+			<return type="PackedStringArray" />
+			<param index="0" name="max_len" type="int" default="65535" />
+			<param index="1" name="eol" type="String" default="&quot;\n&quot;" />
+			<param index="2" name="utf8_encoding" type="bool" default="false" />
+			<description>
+				Read multi lines of string which end with the [code]eol[/code] from the serial port. When expect an utf-8 string, let the [code]utf8_encoding[/code] be [code]true[/code]. The max_len is the maximum length of the total lines of string.
+				[b]Note:[/b] The default [code]eol[/code] is [code]\n[/code].
+			</description>
+		</method>
+		<method name="set_port">
+			<return type="int" enum="Error" />
+			<param index="0" name="port" type="String" />
+			<description>
+				Set the serial port name.
+			</description>
+		</method>
+		<method name="get_port">
+			<return type="String" />
+			<description>
+				Get the serial port name.
+			</description>
+		</method>
+	</methods>
+</class>

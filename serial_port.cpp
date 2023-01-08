@@ -44,6 +44,8 @@ SerialPort::SerialPort(const String &port, uint32_t baudrate, uint32_t timeout, 
 }
 
 SerialPort::~SerialPort() {
+	close();
+	stop_monitoring();
 	delete serial;
 }
 
@@ -302,6 +304,38 @@ String SerialPort::read_line(size_t max_length, String eol, bool utf8_encoding) 
 	}
 
 	return "";
+}
+
+PackedStringArray SerialPort::read_lines(size_t max_length, String eol, bool utf8_encoding) {
+	try {
+		PackedStringArray lines;
+		if (utf8_encoding) {
+			for (std::string line : serial->readlines(max_length, eol.utf8().get_data())) {
+				String str;
+				if (str.parse_utf8(line.c_str()) == OK) {
+					lines.append(str);
+				} else {
+					lines.append(line.c_str());
+				}
+			}
+			return lines;
+		} else {
+			for (std::string line : serial->readlines(max_length, eol.utf8().get_data())) {
+				lines.append(line.c_str());
+			}
+			return lines;
+		}
+	} catch (PortNotOpenedException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (IOException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (SerialException &e) {
+		_on_error(__FUNCTION__, e.what());
+	} catch (...) {
+		_on_error(__FUNCTION__, "Unknown error");
+	}
+
+	return PackedStringArray();
 }
 
 Error SerialPort::set_port(const String &port) {
@@ -624,29 +658,32 @@ void SerialPort::_bind_methods() {
 	ClassDB::bind_static_method("SerialPort", D_METHOD("list_ports"), &SerialPort::list_ports);
 
 	ClassDB::bind_method(D_METHOD("_data_received", "data"), &SerialPort::_data_received);
-	ClassDB::bind_method(D_METHOD("start_monitoring", "interval_in_usec"), &SerialPort::start_monitoring, DEFVAL(10000));
-	ClassDB::bind_method(D_METHOD("stop_monitoring"), &SerialPort::stop_monitoring);
 	ClassDB::bind_method(D_METHOD("is_in_error"), &SerialPort::is_in_error);
 	ClassDB::bind_method(D_METHOD("get_last_error"), &SerialPort::get_last_error);
 
-	ClassDB::bind_method(D_METHOD("available"), &SerialPort::available);
-	ClassDB::bind_method(D_METHOD("wait_readable"), &SerialPort::wait_readable);
-	ClassDB::bind_method(D_METHOD("wait_byte_times", "count"), &SerialPort::wait_byte_times);
-	ClassDB::bind_method(D_METHOD("read_str", "size", "utf8_encoding"), &SerialPort::read_str, DEFVAL(1), DEFVAL(false));
-	ClassDB::bind_method(D_METHOD("write_str", "data", "utf8_encoding"), &SerialPort::write_str, DEFVAL(false));
-	ClassDB::bind_method(D_METHOD("read_raw", "size"), &SerialPort::read_raw, DEFVAL(1));
-	ClassDB::bind_method(D_METHOD("write_raw", "data"), &SerialPort::write_raw);
-	ClassDB::bind_method(D_METHOD("read_line", "max_len", "eol", "utf8_encoding"), &SerialPort::read_line, DEFVAL(65535), DEFVAL("\n"), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("start_monitoring", "interval_in_usec"), &SerialPort::start_monitoring, DEFVAL(10000));
+	ClassDB::bind_method(D_METHOD("stop_monitoring"), &SerialPort::stop_monitoring);
 
 	ClassDB::bind_method(D_METHOD("open", "port"), &SerialPort::open, DEFVAL(""));
 	ClassDB::bind_method(D_METHOD("is_open"), &SerialPort::is_open);
 	ClassDB::bind_method(D_METHOD("close"), &SerialPort::close);
 
+	ClassDB::bind_method(D_METHOD("available"), &SerialPort::available);
+	ClassDB::bind_method(D_METHOD("wait_readable"), &SerialPort::wait_readable);
+	ClassDB::bind_method(D_METHOD("wait_byte_times", "count"), &SerialPort::wait_byte_times);
+	ClassDB::bind_method(D_METHOD("read_str", "size", "utf8_encoding"), &SerialPort::read_str, DEFVAL(1), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("write_str", "content", "utf8_encoding"), &SerialPort::write_str, DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("read_raw", "size"), &SerialPort::read_raw, DEFVAL(1));
+	ClassDB::bind_method(D_METHOD("write_raw", "data"), &SerialPort::write_raw);
+	ClassDB::bind_method(D_METHOD("read_line", "max_len", "eol", "utf8_encoding"), &SerialPort::read_line, DEFVAL(65535), DEFVAL("\n"), DEFVAL(false));
+	ClassDB::bind_method(D_METHOD("read_lines", "max_len", "eol", "utf8_encoding"), &SerialPort::read_lines, DEFVAL(65535), DEFVAL("\n"), DEFVAL(false));
+
 	ClassDB::bind_method(D_METHOD("set_port", "port"), &SerialPort::set_port);
 	ClassDB::bind_method(D_METHOD("get_port"), &SerialPort::get_port);
 	ClassDB::bind_method(D_METHOD("set_baudrate", "baudrate"), &SerialPort::set_baudrate);
 	ClassDB::bind_method(D_METHOD("get_baudrate"), &SerialPort::get_baudrate);
-
+	ClassDB::bind_method(D_METHOD("set_timeout", "timeout"), &SerialPort::set_timeout);
+	ClassDB::bind_method(D_METHOD("get_timeout"), &SerialPort::get_timeout);
 	ClassDB::bind_method(D_METHOD("set_bytesize", "bytesize"), &SerialPort::set_bytesize);
 	ClassDB::bind_method(D_METHOD("get_bytesize"), &SerialPort::get_bytesize);
 	ClassDB::bind_method(D_METHOD("set_parity", "parity"), &SerialPort::set_parity);
@@ -669,8 +706,9 @@ void SerialPort::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_ri"), &SerialPort::get_ri);
 	ClassDB::bind_method(D_METHOD("get_cd"), &SerialPort::get_cd);
 
-	ADD_PROPERTY(PropertyInfo(Variant::INT, "port"), "set_port", "get_port");
+	ADD_PROPERTY(PropertyInfo(Variant::STRING, "port"), "set_port", "get_port");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "baudrate"), "set_baudrate", "get_baudrate");
+	ADD_PROPERTY(PropertyInfo(Variant::INT, "timeout"), "set_timeout", "get_timeout");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "bytesize", PROPERTY_HINT_ENUM, "5, 6, 7, 8"), "set_bytesize", "get_bytesize");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "parity", PROPERTY_HINT_ENUM, "None, Odd, Even, Mark, Space"), "set_parity", "get_parity");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "stopbits", PROPERTY_HINT_ENUM, "1, 2, 1.5"), "set_stopbits", "get_stopbits");
@@ -678,6 +716,7 @@ void SerialPort::_bind_methods() {
 
 	ADD_PROPERTY_DEFAULT("port", "");
 	ADD_PROPERTY_DEFAULT("baudrate", 9600);
+	ADD_PROPERTY_DEFAULT("timeout", 0);
 	ADD_PROPERTY_DEFAULT("bytesize", BYTESIZE_8);
 	ADD_PROPERTY_DEFAULT("parity", PARITY_NONE);
 	ADD_PROPERTY_DEFAULT("stopbits", STOPBITS_1);

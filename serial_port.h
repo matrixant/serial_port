@@ -55,6 +55,8 @@ class SerialPort : public Object {
 
 	void _data_received(const PackedByteArray &buf);
 
+	static void _thread_func(void *p_user_data);
+
 public:
 	enum ByteSize {
 		BYTESIZE_5 = fivebits,
@@ -98,7 +100,6 @@ public:
 
 	Error start_monitoring(uint64_t interval_in_usec = 10000);
 	void stop_monitoring();
-	static void _thread_func(void *p_user_data);
 
 	Error open(String port = "");
 
@@ -121,6 +122,7 @@ public:
 	size_t write_str(const String &data, bool utf8_encoding = false);
 
 	String read_line(size_t size = 65535, String eol = "\n", bool utf8_encoding = false);
+	PackedStringArray read_lines(size_t size = 65535, String eol = "\n", bool utf8_encoding = false);
 
 	Error set_port(const String &port);
 
