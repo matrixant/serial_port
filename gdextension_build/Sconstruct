@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+import os
+import sys
+
+env = SConscript("godot-cpp/SConstruct")
+
+env.Append(CPPDEFINES=["GDEXTENSION"])
+env.Append(CPPPATH=[".", "serial/include"])
+
+addon_sources = [
+    "register_types.cpp",
+    "serial_port.cpp"
+]
+
+serial_dir = "serial/"
+serial_sources = ["src/serial.cc"]
+
+if env["platform"] == "windows":
+    serial_sources.append("src/impl/win.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_win.cc")
+    if env.get("is_msvc", True):
+        env.Append(LINKFLAGS=["setupapi.lib", "Advapi32.lib"])
+    else:
+        env.Append(LIBS=["setupapi", "Advapi32"])
+elif env["platform"] == "linuxbsd":
+    serial_sources.append("src/impl/unix.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_linux.cc")
+elif env["platform"] == "macos":
+    serial_sources.append("src/impl/unix.cc")
+    serial_sources.append("src/impl/list_ports/list_ports_osx.cc")
+
+serial_sources = [serial_dir + file for file in serial_sources]
+
+addon_sources.append(serial_sources)
+addon_name = "serialport"
+addon_path = "gdextension_build/example/addons/{}".format(addon_name)
+if env["platform"] == "macos":
+    library = env.SharedLibrary(
+        "{0}/bin/lib{1}.{2}.{3}.framework/lib{1}.{2}.{3}".format(
+            addon_path,
+            addon_name,
+            env["platform"],
+            env["target"]
+        ),
+        source=addon_sources,
+    )
+else:
+    library = env.SharedLibrary(
+        "{0}/bin/lib{1}{2}{3}".format(
+            addon_path,
+            addon_name,
+            env["suffix"],
+            env["SHLIBSUFFIX"]
+        ),
+        source=addon_sources,
+    )
+
+Default(library)

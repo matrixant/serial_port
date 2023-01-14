@@ -29,13 +29,23 @@
 /*************************************************************************/
 
 #include "serial_port.h"
+
+#ifdef GDEXTENSION
+#include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/core/class_db.hpp>
+
+using namespace godot;
+#else
 #include "core/object/class_db.h"
 #include "core/os/memory.h"
 #include "core/os/os.h"
+#endif
 #include <string>
 
+using namespace std::chrono;
+
 void SerialPort::_data_received(const PackedByteArray &buf) {
-	emit_signal(SNAME("data_received"), buf);
+	emit_signal("data_received", buf);
 }
 
 SerialPort::SerialPort(const String &port, uint32_t baudrate, uint32_t timeout, ByteSize bytesize, Parity parity, StopBits stopbits, FlowControl flowcontrol) {
@@ -67,14 +77,15 @@ void SerialPort::_on_error(const String &where, const String &what) {
 	fine_working = false;
 	error_message = "[" + get_port() + "] Error at " + where + ": " + what;
 	// ERR_FAIL_MSG(error_message);
-	emit_signal(SNAME("got_error"), where, what);
+	emit_signal("got_error", where, what);
 }
 
 Error SerialPort::start_monitoring(uint64_t interval_in_usec) {
-	ERR_FAIL_COND_V_MSG(thread.is_started(), ERR_ALREADY_IN_USE, "Monitor already started.");
+	ERR_FAIL_COND_V_MSG(!monitoring_should_exit, ERR_ALREADY_IN_USE, "Monitor already started.");
+	stop_monitoring();
 	monitoring_should_exit = false;
 	monitoring_interval = interval_in_usec;
-	thread.start(_thread_func, this);
+	thread = std::thread(_thread_func, this);
 	if (is_open()) {
 		fine_working = true;
 	} else {
@@ -85,24 +96,25 @@ Error SerialPort::start_monitoring(uint64_t interval_in_usec) {
 }
 
 void SerialPort::stop_monitoring() {
-	if (thread.is_started()) {
-		monitoring_should_exit = true;
-		thread.wait_to_finish();
+	monitoring_should_exit = true;
+	if (thread.joinable()) {
+		thread.join();
 	}
 }
 
 void SerialPort::_thread_func(void *p_user_data) {
 	SerialPort *serial_port = static_cast<SerialPort *>(p_user_data);
 	while (!serial_port->monitoring_should_exit) {
-		uint64_t ticks_usec = OS::get_singleton()->get_ticks_usec();
+		time_point time_start = system_clock::now();
+
 		if (serial_port->fine_working) {
 			if (serial_port->is_open() && serial_port->available() > 0) {
-				serial_port->call_deferred(SNAME("_data_received"), serial_port->read_raw(serial_port->available()));
+				serial_port->call_deferred("_data_received", serial_port->read_raw(serial_port->available()));
 			}
 		}
-		ticks_usec = OS::get_singleton()->get_ticks_msec() - ticks_usec;
-		if (ticks_usec < serial_port->monitoring_interval) {
-			OS::get_singleton()->delay_usec(serial_port->monitoring_interval - ticks_usec);
+		time_t time_elapsed = duration_cast<microseconds>(system_clock::now() - time_start).count();
+		if (time_elapsed < serial_port->monitoring_interval) {
+			std::this_thread::sleep_for(microseconds(serial_port->monitoring_interval - time_elapsed));
 		}
 	}
 }
@@ -132,7 +144,7 @@ Error SerialPort::open(String port) {
 	}
 
 	fine_working = true;
-	emit_signal(SNAME("opened"), port);
+	emit_signal("opened", port);
 	return OK;
 }
 
@@ -152,7 +164,7 @@ void SerialPort::close() {
 	}
 
 	fine_working = false;
-	emit_signal(SNAME("closed"), serial->getPort().c_str());
+	emit_signal("closed", serial->getPort().c_str());
 }
 
 size_t SerialPort::available() {
@@ -217,19 +229,16 @@ PackedByteArray SerialPort::read_raw(size_t size) {
 }
 
 String SerialPort::read_str(size_t size, bool utf8_encoding) {
-	CharString char_str;
-	std::vector<uint8_t> buf_temp;
 	try {
 		String str;
+		std::vector<uint8_t> buf_temp;
 		size_t bytes_read = serial->read(buf_temp, size);
-		if (bytes_read > 0 && char_str.resize(bytes_read + 1) == OK) {
-			memcpy(char_str.ptrw(), (const char *)buf_temp.data(), bytes_read);
-			char_str[bytes_read] = 0;
-
+		buf_temp.insert(buf_temp.end(), '\0');
+		if (bytes_read > 0) {
 			if (utf8_encoding) {
-				str.parse_utf8(char_str.get_data(), bytes_read);
+				str.parse_utf8((const char *)buf_temp.data(), bytes_read);
 			} else {
-				str = char_str.get_data();
+				str = (const char *)buf_temp.data();
 			}
 		}
 		return str;
@@ -266,10 +275,10 @@ size_t SerialPort::write_str(const String &data, bool utf8_encoding) {
 	try {
 		if (utf8_encoding) {
 			CharString str = data.utf8();
-			return serial->write((const uint8_t *)(str.get_data()), str.size());
+			return serial->write((const uint8_t *)(str.get_data()), str.length());
 		} else {
 			CharString str = data.ascii();
-			return serial->write((const uint8_t *)(str.get_data()), str.size());
+			return serial->write((const uint8_t *)(str.get_data()), str.length());
 		}
 	} catch (PortNotOpenedException &e) {
 		_on_error(__FUNCTION__, e.what());
@@ -312,11 +321,8 @@ PackedStringArray SerialPort::read_lines(size_t max_length, String eol, bool utf
 		if (utf8_encoding) {
 			for (std::string line : serial->readlines(max_length, eol.utf8().get_data())) {
 				String str;
-				if (str.parse_utf8(line.c_str()) == OK) {
-					lines.append(str);
-				} else {
-					lines.append(line.c_str());
-				}
+				str.parse_utf8(line.c_str());
+				lines.append(str);
 			}
 			return lines;
 		} else {
@@ -714,6 +720,7 @@ void SerialPort::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "stopbits", PROPERTY_HINT_ENUM, "1, 2, 1.5"), "set_stopbits", "get_stopbits");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "flowcontrol", PROPERTY_HINT_ENUM, "None, Software, Hardware"), "set_flowcontrol", "get_flowcontrol");
 
+#ifndef GDEXTENSION
 	ADD_PROPERTY_DEFAULT("port", "");
 	ADD_PROPERTY_DEFAULT("baudrate", 9600);
 	ADD_PROPERTY_DEFAULT("timeout", 0);
@@ -721,6 +728,7 @@ void SerialPort::_bind_methods() {
 	ADD_PROPERTY_DEFAULT("parity", PARITY_NONE);
 	ADD_PROPERTY_DEFAULT("stopbits", STOPBITS_1);
 	ADD_PROPERTY_DEFAULT("flowcontrol", FLOWCONTROL_NONE);
+#endif
 
 	ADD_SIGNAL(MethodInfo("got_error", PropertyInfo(Variant::STRING, "where"), PropertyInfo(Variant::STRING, "what")));
 	ADD_SIGNAL(MethodInfo("opened", PropertyInfo(Variant::STRING, "port")));

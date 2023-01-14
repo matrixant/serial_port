@@ -29,7 +29,7 @@
 /*************************************************************************/
 
 #include "register_types.h"
-#include "core/object/class_db.h"
+
 #include "serial_port.h"
 
 void initialize_serial_port_module(ModuleInitializationLevel p_level) {
@@ -45,3 +45,23 @@ void uninitialize_serial_port_module(ModuleInitializationLevel p_level) {
 		return;
 	}
 }
+
+#ifdef GDEXTENSION
+
+#include <godot_cpp/core/defs.hpp>
+#include <godot_cpp/core/memory.hpp>
+
+extern "C" {
+// Initialization.
+GDExtensionBool GDE_EXPORT serial_port_library_init(const GDExtensionInterface *p_interface, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
+	godot::GDExtensionBinding::InitObject init_obj(p_interface, p_library, r_initialization);
+
+	init_obj.register_initializer(initialize_serial_port_module);
+	init_obj.register_terminator(uninitialize_serial_port_module);
+	init_obj.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
+
+	return init_obj.init();
+}
+} // extern "C"
+
+#endif
