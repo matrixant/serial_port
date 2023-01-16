@@ -65,9 +65,6 @@ class SerialPort : public Object {
 
 	void _data_received(const PackedByteArray &buf);
 
-	// const StringName SIGNAL_DATA_RECEIVED = "data_received";
-	// static inline StringName METHOD_DATA_RECEIVED = "_data_received";
-
 public:
 	enum ByteSize {
 		BYTESIZE_5 = fivebits,
