@@ -18,7 +18,7 @@ git clone https://github.com/matrixant/serial_port.git --recursive
 > ```bash
 > cd serial_port
 > git switch plugin
-> git submodule update
+> git submodule update --init --recursive
 > scons --sconstruct=gdextension_build/SConstruct target=template_debug
 > ```
 > The plugin things will be build to `gdextension_build/example/addons/serialport` directory.
