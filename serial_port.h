@@ -190,16 +190,9 @@ protected:
 	static void _bind_methods();
 };
 
-#ifdef GDEXTENSION
-VARIANT_ENUM_CAST(SerialPort, ByteSize);
-VARIANT_ENUM_CAST(SerialPort, Parity);
-VARIANT_ENUM_CAST(SerialPort, StopBits);
-VARIANT_ENUM_CAST(SerialPort, FlowControl);
-#else
 VARIANT_ENUM_CAST(SerialPort::ByteSize);
 VARIANT_ENUM_CAST(SerialPort::Parity);
 VARIANT_ENUM_CAST(SerialPort::StopBits);
 VARIANT_ENUM_CAST(SerialPort::FlowControl);
-#endif
 
 #endif // SERIAL_PORT_H
