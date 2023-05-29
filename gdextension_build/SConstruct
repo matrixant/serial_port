@@ -22,12 +22,14 @@ if env["platform"] == "windows":
         env.Append(LINKFLAGS=["setupapi.lib", "Advapi32.lib"])
     else:
         env.Append(LIBS=["setupapi", "Advapi32"])
-elif env["platform"] == "linuxbsd":
+elif env["platform"].startswith("linux"):
     serial_sources.append("src/impl/unix.cc")
     serial_sources.append("src/impl/list_ports/list_ports_linux.cc")
+    env.Append(LIBS=["rt", "pthread"])
 elif env["platform"] == "macos":
     serial_sources.append("src/impl/unix.cc")
     serial_sources.append("src/impl/list_ports/list_ports_osx.cc")
+print("Build for {0}.".format(env["platform"]))
 
 serial_sources = [serial_dir + file for file in serial_sources]
 
