@@ -38,11 +38,21 @@ addon_name = "serialport"
 addon_path = "gdextension_build/example/addons/{}".format(addon_name)
 if env["platform"] == "macos":
     library = env.SharedLibrary(
-        "{0}/bin/lib{1}.{2}.{3}.framework/lib{1}.{2}.{3}".format(
+        "{0}/bin/lib{1}.{2}.{3}.dylib".format(
             addon_path,
             addon_name,
             env["platform"],
             env["target"]
+        ),
+        source=addon_sources,
+    )
+elif env["platform"] == "windows":
+    library = env.SharedLibrary(
+        "{0}/bin/{1}{2}{3}".format(
+            addon_path,
+            addon_name,
+            env["suffix"],
+            env["SHLIBSUFFIX"]
         ),
         source=addon_sources,
     )

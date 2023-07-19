@@ -1,0 +1,130 @@
+# Action name
+name: Deploy
+
+# 触发条件，这里是新的 tag 被 push 时触发
+on:
+  push:
+    tags:
+      # 正则匹配 tag 格式，如 v0.1.0
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 实际工作
+jobs:
+  build-and-upload:
+    name: Build and Upload
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      # 配置编译目标平台，这里是在 Ubuntu, MacOS, Windows 上分别编译
+      matrix:
+        include:
+          - name: Linux (GCC)
+            platform: linux
+            arch: x86_64
+            os: ubuntu-latest
+            cache-name: linux-x86_64
+
+          - name: Windows (MSVC)
+            platform: windows
+            arch: x86_64
+            os: windows-latest
+            cache-name: windows-x86_64-msvc
+    # 执行流程
+    steps:
+      # 克隆仓库代码
+      - name: Clone repository
+        uses: actions/checkout@v3
+        with:
+          submodules: recursive
+
+      # 获取发布版本号
+      - name: Get the release version from the tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      # 设置 Godot 缓存
+      - name: Setup Godot build cache
+        uses: ./.github/actions/godot-cache
+        with:
+          cache-name: ${{ matrix.cache-name }}
+        continue-on-error: true
+
+      # 安装依赖库
+      - name: Install dependencies
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qqq build-essential pkg-config tree
+    
+      # 安装 SCons
+      - name: Set up Python (for SCons)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install scons
+        run: |
+          python -m pip install scons
+
+      # 构建二进制文件
+      - name: Build binary files (template_debug)
+        run: |
+          scons target=template_debug --sconstruct=gdextension_build/SConstruct
+
+      - name: Build binary files (template_release)
+        run: |
+          scons target=template_release --sconstruct=gdextension_build/SConstruct
+
+      # 打包上传二进制文件
+      - name: Archive files
+        shell: bash
+        run: |
+          addon_name="serialport"
+          addon_path="gdextension_build/example/addons/$addon_name"
+          archive_bin_dir="addons/serialport/bin"
+          
+          mkdir -p "$addon_path/bin"
+          mkdir -p "$archive_bin_dir"
+
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            addon_file_debug="lib$addon_name.${{ matrix.platform }}.template_debug.${{ matrix.arch }}.so"
+            addon_file_release="lib$addon_name.${{ matrix.platform }}.template_release.${{ matrix.arch }}.so"
+          elif [ "${{ matrix.platform }}" = "windows" ]; then
+            addon_file_debug="$addon_name.${{ matrix.platform }}.template_debug.${{ matrix.arch }}.dll"
+            addon_file_release="$addon_name.${{ matrix.platform }}.template_release.${{ matrix.arch }}.dll"
+          fi
+
+          mv $addon_path/bin/$addon_file_debug $archive_bin_dir/$addon_file_debug
+          mv $addon_path/bin/$addon_file_release $archive_bin_dir/$addon_file_release
+
+          cat>$archive_bin_dir/../$addon_name.gdextension<<EOF
+          [configuration]
+          entry_symbol = "${addon_name}_lib_init"
+          compatibility_minimum = 4.1
+
+          [libraries]
+          ${{ matrix.platform }}.debug.${{ matrix.arch }}= "bin/$addon_file_debug"
+          ${{ matrix.platform }}.release.${{ matrix.arch }}= "bin/$addon_file_release"
+
+          EOF
+
+          archive_name="$addon_name-${{ env.VERSION }}-${{ matrix.platform }}"
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            tree addons
+            tar -czvf "$archive_name.tar.gz" "addons"
+            echo "ASSET=$archive_name.tar.gz" >> $GITHUB_ENV
+          elif [ "${{ matrix.platform }}" = "windows" ]; then
+            7z a "$archive_name.zip" "addons"
+            echo "ASSET=$archive_name.zip" >> $GITHUB_ENV
+          fi
+
+      - name: Release files
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            ${{ env.ASSET }}

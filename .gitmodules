@@ -1,9 +1,9 @@
 [submodule "serial"]
 	path = serial
-	url = https://github.com/matrixant/serial.git
+	url = https://github.com/wjwwood/serial.git
 [submodule "godot-cpp"]
 	path = godot-cpp
-	url = https://github.com/matrixant/godot-cpp.git
+	url = https://github.com/godotengine/godot-cpp.git
 [submodule "gdextension_build/example"]
 	path = gdextension_build/example
 	url = https://github.com/matrixant/serial_port_example.git

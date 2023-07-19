@@ -53,8 +53,8 @@ void uninitialize_serial_port_module(ModuleInitializationLevel p_level) {
 
 extern "C" {
 // Initialization.
-GDExtensionBool GDE_EXPORT serial_port_library_init(const GDExtensionInterface *p_interface, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
-	godot::GDExtensionBinding::InitObject init_obj(p_interface, p_library, r_initialization);
+GDExtensionBool GDE_EXPORT serialport_lib_init(const GDExtensionInterfaceGetProcAddress p_get_proc_addr, GDExtensionClassLibraryPtr p_library, GDExtensionInitialization *r_initialization) {
+	godot::GDExtensionBinding::InitObject init_obj(p_get_proc_addr, p_library, r_initialization);
 
 	init_obj.register_initializer(initialize_serial_port_module);
 	init_obj.register_terminator(uninitialize_serial_port_module);

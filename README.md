@@ -14,6 +14,8 @@ git clone https://github.com/matrixant/serial_port.git --recursive
 > cd godot
 > scons target=editor
 > ```
+> * Simple API document included. (Only available when build as module)
+
 > Or you want to build as plugin, switch to the `plugin` branch and update the submodules, then compile the plugin.
 > ```bash
 > cd serial_port
@@ -23,9 +25,8 @@ git clone https://github.com/matrixant/serial_port.git --recursive
 > ```
 > The plugin things will be build to `gdextension_build/example/addons/serialport` directory.
 
+
 2. The `SerialPort` class will add to godot. You can new a SerialPort object and set it's 'port', 'baudrate', 'bytesize' and so on. Then open it and communicate with your serial device.
 3. There is an example in [serial_port_example](https://github.com/matrixant/serial_port_example) repo. 
-
-> Simple API document included.
 
 ![example](https://raw.githubusercontent.com/matrixant/serial_port_example/main/screen_shot_0.png)
